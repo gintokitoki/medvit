@@ -59,15 +59,30 @@ def train():
     model.to(device)
 
     # 4. 准备数据集
-    full_dataset = G1020Dataset(
+    # 方案：创建两个独立的 Dataset 实例，分别绑定训练和验证的 transform
+    train_dataset = G1020Dataset(
         csv_path="/home/wyh/data2/G1020/G1020.csv", 
         img_dir="/home/wyh/data2/G1020/Images",
-        transform=get_g1020_transforms(img_size=img_size)
+        transform=get_g1020_transforms(img_size=img_size, is_train=True)
     )
     
-    train_size = int(0.8 * len(full_dataset))
-    val_size = len(full_dataset) - train_size
-    train_ds, val_ds = random_split(full_dataset, [train_size, val_size])
+    val_dataset = G1020Dataset(
+        csv_path="/home/wyh/data2/G1020/G1020.csv", 
+        img_dir="/home/wyh/data2/G1020/Images",
+        transform=get_g1020_transforms(img_size=img_size, is_train=False)
+    )
+    
+    dataset_size = len(train_dataset)
+    train_size = int(0.8 * dataset_size)
+    val_size = dataset_size - train_size
+
+    # 使用索引进行划分，确保两个 Subset 指向不同的 Dataset 实例
+    indices = torch.randperm(dataset_size).tolist()
+    train_indices = indices[:train_size]
+    val_indices = indices[train_size:]
+
+    train_ds = torch.utils.data.Subset(train_dataset, train_indices)
+    val_ds = torch.utils.data.Subset(val_dataset, val_indices)
 
     train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=4)
