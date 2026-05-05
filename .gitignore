@@ -1,0 +1,129 @@
+# ===================== IDE / 编辑器配置文件 =====================
+# PyCharm / JetBrains 系列
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ===================== Python 相关文件 =====================
+# 缓存与编译文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.egg-info/
+*.egg
+*.whl
+*.so
+*.egg
+dist/
+build/
+*.egg-info/
+MANIFEST
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+*.cover
+*.log
+htmlcov/
+.hypothesis/
+.pytest_cache/
+.cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ===================== 模型权重与大型文件 =====================
+# 权重文件目录
+weights/
+checkpoints/
+ckpt/
+saved_models/
+
+# 权重文件后缀
+*.pth
+*.pt
+*.pth.tar
+*.ckpt
+*.bin
+*.onnx
+*.pb
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# ===================== 数据集与数据文件 =====================
+data/
+datasets/
+raw_data/
+processed_data/
+*.csv
+*.tsv
+*.jsonl
+*.parquet
+*.npy
+*.npz
+
+# ===================== 日志、运行记录与临时文件 =====================
+logs/
+runs/
+wandb/
+mlruns/
+tensorboard/
+*.log
+*.out
+*.err
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===================== 环境与配置文件 =====================
+# Python 虚拟环境
+venv/
+env/
+ENV/
+*.venv/
+*.env/
+
+# Conda 环境
+.conda/
+
+# 环境变量配置
+.env
+.env.local
+.env.*.local
+config.ini
+*.config
+*.yaml.local
+*.yml.local
+
+# ===================== 其他常见忽略项 =====================
+*.bak
+*.bak.*
+*.backup
+*.tmp
+*.temp
+.vscode/
+.vs/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
