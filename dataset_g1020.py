@@ -8,7 +8,7 @@ from torchvision import transforms
 
 class MedicalCLAHE:
     """针对医学影像的自适应直方图均衡化"""
-    def __init__(self, clip_limit=2.0, tile_grid_size=(8, 8)):
+    def __init__(self, clip_limit=1.5, tile_grid_size=(8, 8)):
         self.clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
 
     def __call__(self, img):

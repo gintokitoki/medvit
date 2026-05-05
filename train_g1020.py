@@ -3,11 +3,25 @@ import sys
 import torch
 import torch.nn as nn
 import subprocess
+from sklearn.metrics import recall_score, f1_score
 from torch.utils.data import DataLoader, random_split
 
 # 导入改进后的模型和 G1020 数据集
 from models.medvit_arch import MedViT_small
 from dataset_g1020 import G1020Dataset, get_g1020_transforms
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.4, gamma=2.0):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.ce = nn.CrossEntropyLoss(reduction='none')
+
+    def forward(self, logits, labels):
+        ce_loss = self.ce(logits, labels)
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+        return focal_loss.mean()
 
 def get_best_gpu():
     """通过 nvidia-smi 自动搜寻空闲显存最大的 GPU"""
@@ -56,6 +70,13 @@ def train():
     else:
         print("警告: 未找到预训练权重，将从随机初始化开始训练。")
 
+    # --- 第一步：冻结主干网络 ---
+    # 先让随机初始化的分类头和 FFT 模块适应数据
+    print("正在冻结主干网络，仅训练 FFT 模块和分类头...")
+    for name, param in model.named_parameters():
+        if "fft_block" not in name and "proj_head" not in name:
+            param.requires_grad = False
+    
     model.to(device)
 
     # 4. 准备数据集
@@ -88,14 +109,30 @@ def train():
     val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=4)
 
     # 5. 优化器与损失函数
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
+    # 第二步：加入权重损失 (G1020 约 298:722，给阳性类更高权重)
+    class_weights = torch.tensor([1.0, 2.5]).to(device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    
+    # 第三步：调整学习率策略
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
 
     # 6. 训练循环
-    num_epochs = 20
+    num_epochs = 30 # 增加 Epoch 以确保有足够时间进行全量微调
     best_acc = 0.0
     
+    # 明确定义 optimizer 和 scheduler，确保在循环内更新时作用域正确
     for epoch in range(num_epochs):
+        # 自动解冻逻辑：在第 6 个 Epoch (索引 5) 开始全量微调
+        if epoch == 5:
+            print("--- 启动全量微调：已解冻主干网络 ---")
+            for param in model.parameters():
+                param.requires_grad = True
+            
+            # 显式更新全局作用域内的优化器和调度器
+            optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5) # 微调时使用更小的学习率
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
+
         model.train()
         running_loss = 0.0
         for images, labels in train_loader:
@@ -113,17 +150,27 @@ def train():
         model.eval()
         correct = 0
         total = 0
+        all_preds = []
+        all_labels = []
         with torch.no_grad():
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images)
                 _, predicted = torch.max(outputs.data, 1)
+                
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+                
+                all_preds.extend(predicted.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
 
         accuracy = 100 * correct / total
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {running_loss/len(train_loader):.4f} - Val Accuracy: {accuracy:.2f}%")
+        recall = recall_score(all_labels, all_preds)
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {running_loss/len(train_loader):.4f} - Val Accuracy: {accuracy:.2f}% - Sensitivity (Recall): {recall:.4f}")
         
+        # 更新学习率调度器
+        scheduler.step(accuracy)
+
         # 保存最佳模型
         if accuracy > best_acc:
             best_acc = accuracy
