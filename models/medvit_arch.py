@@ -407,7 +407,7 @@ class LTB(nn.Module):
 class MedViT(nn.Module):
     def __init__(self, stem_chs, depths, path_dropout, attn_drop=0, drop=0, num_classes=1000,
                  strides=[1, 2, 2, 2], sr_ratios=[8, 4, 2, 1], head_dim=32, mix_block_ratio=0.75,
-                 use_checkpoint=False):
+                 use_checkpoint=False, img_size=224):
         super(MedViT, self).__init__()
         self.use_checkpoint = use_checkpoint
 
@@ -430,10 +430,9 @@ class MedViT(nn.Module):
         )
 
         # --- 插入 FFT 模块定义 ---
-        # 对于 Small 版本，Stage 2 结束后的通道数是 256 (看上面的 self.stage_out_channels)
-        # 此时分辨率经过两次 stride=2 的 PatchEmbed 应该是 224 / 4 / 2 = 28
-        # (如果你的数据是 224 输入，Stage 2 结束是 28x28；如果是 56x56 请自行调整 h,w)
-        self.fft_block = LearnableSpectralMask(channels=256, h=28, w=28)
+        # 根据输入尺寸动态计算特征图大小 (经过 Stem 和 Stage 1&2 的下采样，比例为 1/8)
+        feat_size = img_size // 8
+        self.fft_block = LearnableSpectralMask(channels=256, h=feat_size, w=feat_size)
 
         input_channel = stem_chs[-1]
         features = []
@@ -498,38 +497,46 @@ class MedViT(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
+        # 1. 初始特征提取：通过四个卷积层组成的 Stem
         x = self.stem(x)
-        # 遍历 features 并精准插入 FFT
+
+        # 2. 遍历各阶段特征层
         for idx, layer in enumerate(self.features):
+            # 支持使用 checkpoint 节省显存，或直接进行前向计算
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(layer, x)
             else:
                 x = layer(x)
 
-            # --- 精准插入逻辑：在 Stage 2 的最后一层之后执行 FFT ---
+            # 3. 精准插入频域处理逻辑
+            # 在 Stage 2 结束后（例如 Small 版本中 idx 为 6 时），应用 FFT 模块
+            # 由于你修改后的 LearnableSpectralMask 内部已包含 identity + gamma * fft(x)
+            # 此处的赋值操作实际上执行的是残差特征融合
             if idx == self.stage2_end_idx - 1:
                 x = self.fft_block(x)
 
-        x = self.norm(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.proj_head(x)
+        # 4. 后处理与分类输出
+        x = self.norm(x)  # 最终标准化
+        x = self.avgpool(x)  # 全局平均池化
+        x = torch.flatten(x, 1)  # 展平特征向量
+        x = self.proj_head(x)  # 全连接层输出分类结果
+
         return x
 
 
 @register_model
-def MedViT_small(pretrained=False, pretrained_cfg=None, **kwargs):
-    model = MedViT(stem_chs=[64, 32, 64], depths=[3, 4, 10, 3], path_dropout=0.1, **kwargs)
+def MedViT_small(pretrained=False, pretrained_cfg=None, img_size=224, **kwargs):
+    model = MedViT(stem_chs=[64, 32, 64], depths=[3, 4, 10, 3], path_dropout=0.1, img_size=img_size, **kwargs)
     return model
 
 
 @register_model
-def MedViT_base(pretrained=False, pretrained_cfg=None, **kwargs):
-    model = MedViT(stem_chs=[64, 32, 64], depths=[3, 4, 20, 3], path_dropout=0.2, **kwargs)
+def MedViT_base(pretrained=False, pretrained_cfg=None, img_size=224, **kwargs):
+    model = MedViT(stem_chs=[64, 32, 64], depths=[3, 4, 20, 3], path_dropout=0.2, img_size=img_size, **kwargs)
     return model
 
 
 @register_model
-def MedViT_large(pretrained=False, pretrained_cfg=None, **kwargs):
-    model = MedViT(stem_chs=[64, 32, 64], depths=[3, 4, 30, 3], path_dropout=0.2, **kwargs)
+def MedViT_large(pretrained=False, pretrained_cfg=None, img_size=224, **kwargs):
+    model = MedViT(stem_chs=[64, 32, 64], depths=[3, 4, 30, 3], path_dropout=0.2, img_size=img_size, **kwargs)
     return model

@@ -2,21 +2,42 @@ import os
 import sys
 import torch
 import torch.nn as nn
+import subprocess
 from torch.utils.data import DataLoader, random_split
 
 # 导入改进后的模型和 G1020 数据集
 from models.medvit_arch import MedViT_small
 from dataset_g1020 import G1020Dataset, get_g1020_transforms
 
+def get_best_gpu():
+    """通过 nvidia-smi 自动搜寻空闲显存最大的 GPU"""
+    try:
+        # 查询所有 GPU 的剩余显存
+        result = subprocess.check_output(
+            ['nvidia-smi', '--query-gpu=memory.free', '--format=csv,nounits,noheader'],
+            encoding='utf-8'
+        )
+        # 将结果转换为整数列表 [free_mem_0, free_mem_1, ...]
+        free_memory = [int(x.strip()) for x in result.strip().split('\n')]
+        # 找到显存最大的 GPU 索引
+        best_gpu_index = free_memory.index(max(free_memory))
+        print(f"检测到各显卡剩余显存: {free_memory} MiB")
+        print(f"自动选择空闲显存最大的显卡: cuda:{best_gpu_index}")
+        return torch.device(f"cuda:{best_gpu_index}")
+    except Exception as e:
+        print(f"无法自动检测 GPU (可能 nvidia-smi 不可用): {e}")
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def train():
-    # 1. 设备配置
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # 1. 设备配置 (自动搜寻空闲卡)
+    device = get_best_gpu()
     print(f"--- 启动 G1020 训练任务 ---")
     print(f"当前设备: {device}")
 
     # 2. 初始化改进后的模型
-    # 注意：根据 models/medvit_arch.py，分类头是 proj_head
-    model = MedViT_small(num_classes=2)
+    # 设置为 384 以匹配 G1020 的训练需求
+    img_size = 384
+    model = MedViT_small(num_classes=2, img_size=img_size)
     
     # 3. 加载预训练权重
     weight_path = "weights/MedViT_small_im1k.pth"
@@ -25,9 +46,8 @@ def train():
         checkpoint = torch.load(weight_path, map_location='cpu')
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
         
-        # 过滤掉形状不匹配的权重（主要是分类头）
+        # 过滤掉形状不匹配的权重（主要是分类头和新增加的 FFT 掩码）
         model_dict = model.state_dict()
-        # 改进：由于新模型增加了 fft_block.mask，需要允许这部分不加载
         state_dict = {k: v for k, v in state_dict.items() 
                       if k in model_dict and v.shape == model_dict[k].shape}
         
@@ -38,9 +58,7 @@ def train():
 
     model.to(device)
 
-    # 4. 准备数据集 (注意：目前模型 FFT 模块固定为 224x224 输入对应的 28x28 特征图)
-    # 如果要使用 384x384，请参考后续说明修改 models/medvit_arch.py
-    img_size = 224 
+    # 4. 准备数据集
     full_dataset = G1020Dataset(
         csv_path="/home/wyh/data2/G1020/G1020.csv", 
         img_dir="/home/wyh/data2/G1020/Images",
