@@ -109,28 +109,31 @@ def train():
     val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=4)
 
     # 5. 优化器与损失函数
-    # 第二步：加入权重损失 (G1020 约 298:722，给阳性类更高权重)
-    class_weights = torch.tensor([1.0, 2.5]).to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    # 策略 C：使用 Focal Loss 替代 CrossEntropy
+    criterion = FocalLoss(alpha=0.4).to(device) # alpha 偏向少数类
     
     # 第三步：调整学习率策略
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
 
     # 6. 训练循环
-    num_epochs = 30 # 增加 Epoch 以确保有足够时间进行全量微调
+    num_epochs = 40 # 增加 Epoch 以确保有足够时间进行全量精细微调
     best_acc = 0.0
     
     # 明确定义 optimizer 和 scheduler，确保在循环内更新时作用域正确
     for epoch in range(num_epochs):
-        # 自动解冻逻辑：在第 6 个 Epoch (索引 5) 开始全量微调
-        if epoch == 5:
-            print("--- 启动全量微调：已解冻主干网络 ---")
+        # 策略 A：延长冻结期至 10 轮
+        if epoch == 10:
+            print("--- 启动精细微调：已解冻主干网络 ---")
             for param in model.parameters():
                 param.requires_grad = True
             
-            # 显式更新全局作用域内的优化器和调度器
-            optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5) # 微调时使用更小的学习率
+            # 策略 C：分层学习率 (主干极小 1e-6，新模块 1e-4)
+            optimizer = torch.optim.AdamW([
+                {'params': model.fft_block.parameters(), 'lr': 1e-4},
+                {'params': model.proj_head.parameters(), 'lr': 1e-4},
+                {'params': [p for n, p in model.named_parameters() if "fft" not in n and "proj" not in n], 'lr': 1e-6}
+            ])
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
 
         model.train()
@@ -166,7 +169,8 @@ def train():
 
         accuracy = 100 * correct / total
         recall = recall_score(all_labels, all_preds)
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {running_loss/len(train_loader):.4f} - Val Accuracy: {accuracy:.2f}% - Sensitivity (Recall): {recall:.4f}")
+        f1 = f1_score(all_labels, all_preds)
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {running_loss/len(train_loader):.4f} - Val Accuracy: {accuracy:.2f}% - Sensitivity (Recall): {recall:.4f} - F1-Score: {f1:.4f}")
         
         # 更新学习率调度器
         scheduler.step(accuracy)
