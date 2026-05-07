@@ -10,9 +10,9 @@ class LearnableSpectralMask(nn.Module):
         # FFT后尺寸为 (h, w // 2 + 1)
         self.mask = nn.Parameter(torch.ones(channels, h, w // 2 + 1))
 
-        # 2. 引入可学习的缩放因子，初始化为 0
-        # 这确保了在训练初期，该模块对输入不做任何改变（残差逻辑）
-        self.gamma = nn.Parameter(torch.zeros(1))
+        # 2. 引入可学习的缩放因子，初始化为 0.1
+        # 初始值为 0.1，给频域分支一个初始的“存在感”
+        self.gamma = nn.Parameter(torch.full((1,), 0.1))
 
     def forward(self, x):
         # x 形状: [B, C, H, W]

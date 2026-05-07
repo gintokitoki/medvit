@@ -105,12 +105,20 @@ def train():
     train_ds = torch.utils.data.Subset(train_dataset, train_indices)
     val_ds = torch.utils.data.Subset(val_dataset, val_indices)
 
-    train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=4)
+    # 方案 B：加入数据均衡采样 (WeightedRandomSampler)
+    # 计算训练集中每个样本的权重，给阳性类更高的采样概率
+    train_labels = [int(train_dataset.df.iloc[i][train_dataset.label_col]) for i in train_indices]
+    weights = [3.0 if label == 1 else 1.0 for label in train_labels]
+    sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights))
+
+    # 使用 sampler 时不能设置 shuffle=True
+    train_loader = DataLoader(train_ds, batch_size=16, sampler=sampler, num_workers=4)
     val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=4)
 
     # 5. 优化器与损失函数
     # 策略 C：使用 Focal Loss 替代 CrossEntropy
-    criterion = FocalLoss(alpha=0.4).to(device) # alpha 偏向少数类
+    # 调整 alpha=0.6 以加大对少数类（青光眼）漏诊的惩罚
+    criterion = FocalLoss(alpha=0.6).to(device) # alpha 偏向少数类
     
     # 第三步：调整学习率策略
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
