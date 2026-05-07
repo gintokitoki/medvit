@@ -107,8 +107,9 @@ def train():
 
     # 方案 B：加入数据均衡采样 (WeightedRandomSampler)
     # 计算训练集中每个样本的权重，给阳性类更高的采样概率
+    # 调低采样权重至 2.0，平衡关注度
     train_labels = [int(train_dataset.df.iloc[i][train_dataset.label_col]) for i in train_indices]
-    weights = [3.0 if label == 1 else 1.0 for label in train_labels]
+    weights = [2.0 if label == 1 else 1.0 for label in train_labels]
     sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights))
 
     # 使用 sampler 时不能设置 shuffle=True
@@ -117,8 +118,8 @@ def train():
 
     # 5. 优化器与损失函数
     # 策略 C：使用 Focal Loss 替代 CrossEntropy
-    # 调整 alpha=0.6 以加大对少数类（青光眼）漏诊的惩罚
-    criterion = FocalLoss(alpha=0.6).to(device) # alpha 偏向少数类
+    # 调低 alpha=0.45，回归理性训练
+    criterion = FocalLoss(alpha=0.45).to(device) # alpha 偏向少数类
     
     # 第三步：调整学习率策略
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
@@ -126,7 +127,7 @@ def train():
 
     # 6. 训练循环
     num_epochs = 40 # 增加 Epoch 以确保有足够时间进行全量精细微调
-    best_acc = 0.0
+    best_f1 = 0.0
     
     # 明确定义 optimizer 和 scheduler，确保在循环内更新时作用域正确
     for epoch in range(num_epochs):
@@ -183,10 +184,11 @@ def train():
         # 更新学习率调度器
         scheduler.step(accuracy)
 
-        # 保存最佳模型
-        if accuracy > best_acc:
-            best_acc = accuracy
-            torch.save(model.state_dict(), "weights/medvit_g1020_best.pth")
+        # 保存最佳模型 (按 F1-Score 保存)
+        if f1 > best_f1:
+            best_f1 = f1
+            torch.save(model.state_dict(), "weights/medvit_g1020_best_f1.pth")
+            print(f"--- 发现更优模型 (F1: {f1:.4f})，已保存权重 ---")
 
 if __name__ == "__main__":
     train()
