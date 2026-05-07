@@ -133,15 +133,16 @@ def train():
     for epoch in range(num_epochs):
         # 策略 A：延长冻结期至 10 轮
         if epoch == 10:
-            print("--- 启动精细微调：已解冻主干网络 ---")
+            print("--- 启动破局微调：调整学习率分布 ---")
             for param in model.parameters():
                 param.requires_grad = True
             
-            # 策略 C：分层学习率 (主干极小 1e-6，新模块 1e-4)
+            # 策略 C：分层学习率 (主干 5e-6，新模块 1e-4)
             optimizer = torch.optim.AdamW([
                 {'params': model.fft_block.parameters(), 'lr': 1e-4},
                 {'params': model.proj_head.parameters(), 'lr': 1e-4},
-                {'params': [p for n, p in model.named_parameters() if "fft" not in n and "proj" not in n], 'lr': 1e-6}
+                # 将 1e-6 提升至 5e-6，增强学习动力
+                {'params': [p for n, p in model.named_parameters() if "fft" not in n and "proj" not in n], 'lr': 5e-6}
             ])
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
 
@@ -181,8 +182,8 @@ def train():
         f1 = f1_score(all_labels, all_preds)
         print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {running_loss/len(train_loader):.4f} - Val Accuracy: {accuracy:.2f}% - Sensitivity (Recall): {recall:.4f} - F1-Score: {f1:.4f}")
         
-        # 更新学习率调度器
-        scheduler.step(accuracy)
+        # 更新学习率调度器：由 Accuracy 转向 F1-Score
+        scheduler.step(f1)
 
         # 保存最佳模型 (按 F1-Score 保存)
         if f1 > best_f1:

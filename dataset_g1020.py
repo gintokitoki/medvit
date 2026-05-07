@@ -55,22 +55,21 @@ class G1020Dataset(Dataset):
         return image, label
 
 def get_g1020_transforms(img_size=384, is_train=True):
-    transform_list = [
-        MedicalCLAHE(),  # 1. 首先进行对比度增强，让 FFT 能看到更清晰的边缘
-        transforms.Resize((img_size, img_size)),
-    ]
-    
     if is_train:
-        # 2. 训练集加入几何变换
-        transform_list.extend([
+        return transforms.Compose([
+            MedicalCLAHE(clip_limit=1.5),  # 1. 首先进行对比度增强
+            transforms.Resize((img_size, img_size)),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomVerticalFlip(p=0.5),
-            transforms.RandomRotation(degrees=15), # 小角度旋转，模拟拍摄偏差
+            transforms.RandomRotation(degrees=20),   # 增加旋转度数
+            transforms.ColorJitter(brightness=0.1, contrast=0.1), # 增加光影扰动
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
-    
-    transform_list.extend([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    
-    return transforms.Compose(transform_list)
+    else:
+        return transforms.Compose([
+            MedicalCLAHE(clip_limit=1.5),
+            transforms.Resize((img_size, img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
