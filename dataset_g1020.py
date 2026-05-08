@@ -28,26 +28,28 @@ class G1020Dataset(Dataset):
         self.df = pd.read_csv(self.csv_path)
         self.transform = transform
 
-        # 适配 G1020 数据集常见的列名
-        self.image_col = 'image_id' if 'image_id' in self.df.columns else self.df.columns[0]
-        # binary_label 为青光眼分类常用列名
-        self.label_col = 'binary_label' if 'binary_label' in self.df.columns else self.df.columns[-1]
+        # --- 根据截图精确指定列名 ---
+        self.image_col = 'imageID'      # 对应第一列 (image_0.jpg)
+        self.label_col = 'binaryLabels' # 对应第二列 (0 或 1)
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, idx):
+        # 1. 直接获取带后缀的文件名
         img_name = str(self.df.iloc[idx][self.image_col])
-        if not img_name.lower().endswith('.jpg'):
-            img_name += '.jpg'
-
         img_path = os.path.join(self.img_dir, img_name)
+        
+        # 2. 标签读取
+        label = int(self.df.iloc[idx][self.label_col])
+
+        # 3. 增强读取的健壮性：确保只读图片
         try:
             image = Image.open(img_path).convert('RGB')
-        except FileNotFoundError:
-            image = Image.open(os.path.join(self.img_dir, str(self.df.iloc[idx][self.image_col]))).convert('RGB')
-            
-        label = int(self.df.iloc[idx][self.label_col])
+        except Exception as e:
+            print(f"读取图片失败: {img_path}, 错误: {e}")
+            # 如果读取失败，返回一个全黑图占位，避免训练崩溃（也可以选择抛出异常）
+            image = Image.new('RGB', (384, 384), (0, 0, 0))
 
         if self.transform:
             image = self.transform(image)
@@ -61,7 +63,7 @@ def get_g1020_transforms(img_size=384, is_train=True):
             transforms.Resize((img_size, img_size)),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomVerticalFlip(p=0.5),
-            transforms.RandomRotation(degrees=20),   # 增加旋转度数
+            transforms.RandomRotation(degrees=15),   # 调回 15 度以降低噪点
             transforms.ColorJitter(brightness=0.1, contrast=0.1), # 增加光影扰动
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])

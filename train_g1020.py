@@ -11,11 +11,12 @@ from models.medvit_arch import MedViT_small
 from dataset_g1020 import G1020Dataset, get_g1020_transforms
 
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.4, gamma=2.0):
+    def __init__(self, alpha=0.5, gamma=2.0): # alpha 调为 0.5，寻找黄金分割点
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
-        self.ce = nn.CrossEntropyLoss(reduction='none')
+        # 增加 label_smoothing 强制模型后期不要走极端
+        self.ce = nn.CrossEntropyLoss(reduction='none', label_smoothing=0.1)
 
     def forward(self, logits, labels):
         ce_loss = self.ce(logits, labels)
@@ -106,10 +107,14 @@ def train():
     val_ds = torch.utils.data.Subset(val_dataset, val_indices)
 
     # 方案 B：加入数据均衡采样 (WeightedRandomSampler)
-    # 计算训练集中每个样本的权重，给阳性类更高的采样概率
-    # 调低采样权重至 2.0，平衡关注度
-    train_labels = [int(train_dataset.df.iloc[i][train_dataset.label_col]) for i in train_indices]
-    weights = [2.0 if label == 1 else 1.0 for label in train_labels]
+    # --- 修正后的权重计算，确保索引安全对齐 ---
+    train_labels = []
+    for i in train_indices:
+        label = train_dataset.df.iloc[i][train_dataset.label_col]
+        train_labels.append(int(label))
+
+    # 1.8 倍采样权重 (最终平衡方案)
+    weights = [1.8 if l == 1 else 1.0 for l in train_labels]
     sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights))
 
     # 使用 sampler 时不能设置 shuffle=True
@@ -118,10 +123,11 @@ def train():
 
     # 5. 优化器与损失函数
     # 策略 C：使用 Focal Loss 替代 CrossEntropy
-    # 调低 alpha=0.45，回归理性训练
-    criterion = FocalLoss(alpha=0.45).to(device) # alpha 偏向少数类
+    # 最终版平衡点：alpha=0.5
+    criterion = FocalLoss(alpha=0.5).to(device) # alpha 偏向少数类
     
     # 第三步：调整学习率策略
+    # 初始学习率给高一点 (1e-4)，让新模块快速对齐
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
 
@@ -133,18 +139,19 @@ def train():
     for epoch in range(num_epochs):
         # 策略 A：延长冻结期至 10 轮
         if epoch == 10:
-            print("--- 启动破局微调：调整学习率分布 ---")
+            print("--- 启动最终版平衡微调：调整学习率分布 ---")
             for param in model.parameters():
                 param.requires_grad = True
             
-            # 策略 C：分层学习率 (主干 5e-6，新模块 1e-4)
+            # 策略 C：分层学习率 (主干 3e-6，新模块 1e-4)
+            # 3e-6 是最稳健的微调速度
             optimizer = torch.optim.AdamW([
                 {'params': model.fft_block.parameters(), 'lr': 1e-4},
                 {'params': model.proj_head.parameters(), 'lr': 1e-4},
-                # 将 1e-6 提升至 5e-6，增强学习动力
-                {'params': [p for n, p in model.named_parameters() if "fft" not in n and "proj" not in n], 'lr': 5e-6}
+                {'params': [p for n, p in model.named_parameters() if "fft" not in n and "proj" not in n], 'lr': 3e-6}
             ])
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
+            # 调大学习率等待耐力 (patience=6, factor=0.2)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.2, patience=6)
 
         model.train()
         running_loss = 0.0
